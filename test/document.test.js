@@ -782,6 +782,9 @@ suite('Document', () => {
         replicaA.testLocalDocument.setTextInRange(change.newStart, change.newEnd, change.oldText)
       }
       assert.equal(replicaA.testLocalDocument.text, 'b1 a1 ')
+
+      // Ensure we don't modify the undo stack when getting changes since checkpoint (regression).
+      assert.deepEqual(replicaA.getChangesSinceCheckpoint(checkpoint), changesSinceCheckpoint)
     })
 
     test('undoing and redoing an operation that occurred adjacent to a checkpoint', () => {
@@ -860,6 +863,32 @@ suite('Document', () => {
 
       assert.equal(replicaA.testLocalDocument.text, 'ac')
       assert.equal(replicaB.testLocalDocument.text, 'ac')
+    })
+
+    test('grouping the last 2 transactions', () => {
+      const document = buildDocument(1)
+      performInsert(document, {row: 0, column: 0}, 'a')
+      performInsert(document, {row: 0, column: 1}, 'b')
+      const checkpoint1 = document.createCheckpoint()
+      performInsert(document, {row: 0, column: 2}, 'c')
+      const checkpoint2 = document.createCheckpoint()
+
+      assert(document.groupLastChanges())
+      assert.equal(document.getText(), 'abc')
+      document.undo()
+      assert.equal(document.getText(), 'a')
+      document.redo()
+      assert.equal(document.getText(), 'abc')
+      assert(!document.revertToCheckpoint(checkpoint1))
+      performInsert(document, {row: 0, column: 3}, 'd')
+      assert(!document.revertToCheckpoint(checkpoint2))
+
+      // Can't group past barrier checkpoints
+      const checkpoint3 = document.createCheckpoint({isBarrier: true})
+      performInsert(document, {row: 0, column: 4}, 'e')
+      assert(!document.groupLastChanges())
+      assert(document.revertToCheckpoint(checkpoint3))
+      assert.equal(document.getText(), 'abcd')
     })
 
     test('applying a grouping interval', () => {
@@ -1119,7 +1148,7 @@ function replicateDocument (siteId, document) {
 }
 
 function performInsert (replica, position, text) {
-  return performSetTextInRange(replica, position, ZERO_POINT, text)
+  return performSetTextInRange(replica, position, position, text)
 }
 
 function performDelete (replica, start, end) {
